@@ -1,3 +1,3 @@
-# gesetzimnetz_app
+# gesetzimnetz-app
 
 A new Flutter project.

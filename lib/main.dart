@@ -1,30 +1,23 @@
+import 'dart:convert';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as path;
+import 'package:sqflite/sqflite.dart';
+
+import 'theme.dart';
+
+const String kAppSansFont = 'Segoe UI';
+const List<String> kAppSansFallback = <String>['Helvetica', 'Arial'];
+const String kAppSerifFont = 'Georgia';
+const List<String> kAppSerifFallback = <String>['Times New Roman'];
 
 void main() {
   runApp(const MainApp());
 }
-
-final List<SectionItem> demoSections = List.generate(
-  6,
-  (sectionIndex) => SectionItem(
-    title: 'Abschnitt ${sectionIndex + 1}',
-    entries: List.generate(
-      8,
-      (entryIndex) => DetailItem(
-        title: 'Eintrag ${sectionIndex + 1}.${entryIndex + 1}',
-        paragraphs: List.generate(
-          10,
-          (paragraphIndex) =>
-              'Lorem ipsum fuer ${sectionIndex + 1}.${entryIndex + 1} - '
-              'Absatz ${paragraphIndex + 1}. Hier kann spaeter dein echter '
-              'Backend-Content eingebunden werden.',
-        ),
-      ),
-    ),
-  ),
-);
 
 class MainApp extends StatelessWidget {
   const MainApp({super.key});
@@ -35,8 +28,18 @@ class MainApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0B5D7A)),
+        fontFamily: kAppSansFont,
+        fontFamilyFallback: kAppSansFallback,
+        textTheme: ThemeData.light().textTheme.apply(
+          fontFamily: kAppSansFont,
+          fontFamilyFallback: kAppSansFallback,
+        ),
+        primaryTextTheme: ThemeData.light().primaryTextTheme.apply(
+          fontFamily: kAppSansFont,
+          fontFamilyFallback: kAppSansFallback,
+        ),
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF6F7F9),
+        scaffoldBackgroundColor: kAppBackgroundColor,
       ),
       home: const RootListPage(),
     );
@@ -51,12 +54,21 @@ class RootListPage extends StatefulWidget {
 }
 
 class _RootListPageState extends State<RootListPage> {
+  final LawsRepository _lawsRepository = LawsRepository();
+  late Future<List<LawSummary>> _lawsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _lawsFuture = _lawsRepository.getLaws();
+  }
+
   Future<void> _refresh() async {
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    if (!mounted) {
-      return;
-    }
-    setState(() {});
+    final future = _lawsRepository.getLaws();
+    setState(() {
+      _lawsFuture = future;
+    });
+    await future;
   }
 
   @override
@@ -66,97 +78,189 @@ class _RootListPageState extends State<RootListPage> {
         title: 'Gesetz im Netz',
         showRootBrand: true,
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView.separated(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          itemCount: demoSections.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final section = demoSections[index];
-            return OrderedListTile(
-              index: index + 1,
-              title: section.title,
-              onTap: () {
-                Navigator.of(context).push(
-                  CupertinoPageRoute<void>(
-                    builder: (_) => SectionDetailPage(section: section),
-                  ),
+      body: FutureBuilder<List<LawSummary>>(
+        future: _lawsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
+            return LoadingListView(onRefresh: _refresh);
+          }
+
+          if (snapshot.hasError) {
+            return ErrorListView(
+              onRefresh: _refresh,
+              icon: Icons.cloud_off_rounded,
+              title: 'Die Gesetzesliste konnte gerade nicht geladen werden.',
+              detail: '${snapshot.error}',
+            );
+          }
+
+          final laws = snapshot.data ?? const <LawSummary>[];
+
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: laws.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final law = laws[index];
+                return AppListTile(
+                  title: law.name,
+                  subtitle: law.code,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      CupertinoPageRoute<void>(
+                        builder: (_) => SectionDetailPage(law: law),
+                      ),
+                    );
+                  },
                 );
               },
-            );
-          },
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 }
 
 class SectionDetailPage extends StatefulWidget {
-  const SectionDetailPage({required this.section, super.key});
+  const SectionDetailPage({required this.law, super.key});
 
-  final SectionItem section;
+  final LawSummary law;
 
   @override
   State<SectionDetailPage> createState() => _SectionDetailPageState();
 }
 
 class _SectionDetailPageState extends State<SectionDetailPage> {
-  Future<void> _refresh() async {
-    await Future<void>.delayed(const Duration(milliseconds: 700));
-    if (!mounted) {
-      return;
-    }
-    setState(() {});
+  final LawsRepository _lawsRepository = LawsRepository();
+  late Future<List<ParagraphSummary>> _paragraphsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _paragraphsFuture = _lawsRepository.getParagraphs(widget.law.code);
   }
 
-  Future<void> _openSheet(DetailItem item) {
+  Future<void> _refresh() async {
+    final future = _lawsRepository.getParagraphs(widget.law.code);
+    setState(() {
+      _paragraphsFuture = future;
+    });
+    await future;
+  }
+
+  Future<void> _openSheet(ParagraphSummary paragraph) {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => DetailBottomSheet(item: item),
+      builder: (context) => DetailBottomSheet(
+        lawCode: widget.law.code,
+        paragraph: paragraph,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: SectionAppBar(title: widget.section.title),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView.separated(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          itemCount: widget.section.entries.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final entry = widget.section.entries[index];
-            return OrderedListTile(
-              index: index + 1,
-              title: entry.title,
-              onTap: () => _openSheet(entry),
+      appBar: SectionAppBar(title: widget.law.name),
+      body: FutureBuilder<List<ParagraphSummary>>(
+        future: _paragraphsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
+            return LoadingListView(onRefresh: _refresh);
+          }
+
+          if (snapshot.hasError) {
+            return ErrorListView(
+              onRefresh: _refresh,
+              icon: Icons.cloud_off_rounded,
+              title: 'Die Paragraphen konnten gerade nicht geladen werden.',
+              detail: '${snapshot.error}',
             );
-          },
-        ),
+          }
+
+          final paragraphs = snapshot.data ?? const <ParagraphSummary>[];
+
+          if (paragraphs.isEmpty) {
+            return ErrorListView(
+              onRefresh: _refresh,
+              icon: Icons.menu_book_rounded,
+              title: 'Fuer dieses Gesetz wurden noch keine Paragraphen gefunden.',
+            );
+          }
+
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: paragraphs.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (context, index) {
+                final paragraph = paragraphs[index];
+                return AppListTile(
+                  titleWidget: ParagraphTitle(
+                    number: paragraph.number,
+                    title: paragraph.title,
+                  ),
+                  backgroundColor: Colors.transparent,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 18,
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded, size: 20),
+                  onTap: () => _openSheet(paragraph),
+                );
+              },
+            ),
+          );
+        },
       ),
     );
   }
 }
 
-class DetailBottomSheet extends StatelessWidget {
-  const DetailBottomSheet({required this.item, super.key});
+class DetailBottomSheet extends StatefulWidget {
+  const DetailBottomSheet({
+    required this.lawCode,
+    required this.paragraph,
+    super.key,
+  });
 
-  final DetailItem item;
+  final String lawCode;
+  final ParagraphSummary paragraph;
+
+  @override
+  State<DetailBottomSheet> createState() => _DetailBottomSheetState();
+}
+
+class _DetailBottomSheetState extends State<DetailBottomSheet> {
+  final LawsRepository _lawsRepository = LawsRepository();
+  late Future<ParagraphDetail> _detailFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _detailFuture = _lawsRepository.getParagraphDetail(
+      widget.lawCode,
+      widget.paragraph.number,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.85,
-      maxChildSize: 0.85,
+      initialChildSize: 0.9,
+      maxChildSize: 0.9,
       minChildSize: 0.3,
       shouldCloseOnMinExtent: true,
       builder: (context, scrollController) {
@@ -165,43 +269,98 @@ class DetailBottomSheet extends StatelessWidget {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 52,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.black12,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                child: SheetHeader(title: item.title),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  controller: scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-                  itemCount: item.paragraphs.length,
-                  itemBuilder: (context, index) {
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF6F7F9),
-                        borderRadius: BorderRadius.circular(18),
+          child: FutureBuilder<ParagraphDetail>(
+            future: _detailFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting &&
+                  !snapshot.hasData) {
+                return Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    const SheetGrip(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                      child: SheetHeader(
+                        title: widget.paragraph.displayTitle,
+                        showCloseButton: false,
                       ),
-                      child: Text(
-                        item.paragraphs[index],
-                        style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const Expanded(
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ],
+                );
+              }
+
+              if (snapshot.hasError) {
+                return Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    const SheetGrip(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                      child: SheetHeader(
+                        title: widget.paragraph.displayTitle,
+                        showCloseButton: false,
                       ),
-                    );
-                  },
-                ),
-              ),
-            ],
+                    ),
+                    Expanded(
+                      child: ListView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.all(24),
+                        children: [
+                          const SizedBox(height: 48),
+                          Icon(
+                            Icons.cloud_off_rounded,
+                            size: 48,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Der Paragraph konnte gerade nicht geladen werden.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${snapshot.error}',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }
+
+              final detail = snapshot.data!;
+              final contentBlocks = detail.contentBlocks;
+
+              return Column(
+                children: [
+                  const SizedBox(height: 10),
+                  const SheetGrip(),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                    child: SheetHeader(
+                      title: detail.displayTitle,
+                      showCloseButton: false,
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                      itemCount: contentBlocks.length,
+                      itemBuilder: (context, index) {
+                        return ContentCard(text: contentBlocks[index]);
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         );
       },
@@ -231,32 +390,169 @@ class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
               children: [
                 SvgPicture.asset(
                   'favicon.svg',
-                  width: 22,
-                  height: 22,
+                  width: 33,
+                  height: 33,
                 ),
                 const SizedBox(width: 10),
-                Flexible(child: Text(title)),
+                Flexible(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               ],
             )
-          : Text(title),
+          : Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
       centerTitle: false,
       surfaceTintColor: Colors.transparent,
     );
   }
 }
 
+class AppListTile extends StatelessWidget {
+  const AppListTile({
+    required this.onTap,
+    this.title,
+    this.subtitle,
+    this.titleWidget,
+    this.backgroundColor = Colors.white,
+    this.padding = const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    this.trailing = const Icon(Icons.chevron_right_rounded),
+    super.key,
+  });
+
+  final VoidCallback onTap;
+  final String? title;
+  final String? subtitle;
+  final Widget? titleWidget;
+  final Color backgroundColor;
+  final EdgeInsetsGeometry padding;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: backgroundColor,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: padding,
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    titleWidget ??
+                        Text(
+                          title ?? '',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                    if (subtitle != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle!,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.secondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 12),
+                trailing!,
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ParagraphTitle extends StatelessWidget {
+  const ParagraphTitle({
+    required this.number,
+    required this.title,
+    super.key,
+  });
+
+  final String number;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w400,
+      color: const Color(0xFF526377),
+      height: 1.25,
+    );
+    final numberStyle = style?.copyWith(
+      fontWeight: FontWeight.w700,
+      color: const Color(0xFF102A43),
+    );
+
+    return Text.rich(
+      TextSpan(
+        style: style,
+        children: [
+          TextSpan(
+            text: '§ $number',
+            style: numberStyle,
+          ),
+          const WidgetSpan(child: SizedBox(width: 14)),
+          TextSpan(text: title),
+        ],
+      ),
+    );
+  }
+}
+
+class SheetGrip extends StatelessWidget {
+  const SheetGrip({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 52,
+      height: 5,
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        borderRadius: BorderRadius.circular(999),
+      ),
+    );
+  }
+}
+
 class SheetHeader extends StatelessWidget {
-  const SheetHeader({required this.title, super.key});
+  const SheetHeader({
+    required this.title,
+    this.showCloseButton = true,
+    super.key,
+  });
 
   final String title;
+  final bool showCloseButton;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: Colors.white,
       child: Container(
-        height: kToolbarHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        constraints: const BoxConstraints(minHeight: kToolbarHeight),
+        padding: const EdgeInsets.fromLTRB(4, 8, 4, 12),
         decoration: BoxDecoration(
           border: Border(
             bottom: BorderSide(
@@ -266,15 +562,20 @@ class SheetHeader extends StatelessWidget {
         ),
         child: Row(
           children: [
-            IconButton(
-              onPressed: () => Navigator.of(context).maybePop(),
-              icon: const Icon(Icons.keyboard_arrow_down_rounded),
-            ),
+            if (showCloseButton)
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              ),
             Expanded(
               child: Text(
                 title,
-                style: Theme.of(context).textTheme.titleLarge,
-                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.fade,
               ),
             ),
           ],
@@ -284,75 +585,539 @@ class SheetHeader extends StatelessWidget {
   }
 }
 
-class OrderedListTile extends StatelessWidget {
-  const OrderedListTile({
-    required this.index,
-    required this.title,
-    required this.onTap,
-    super.key,
-  });
+class ContentCard extends StatelessWidget {
+  const ContentCard({required this.text, super.key});
 
-  final int index;
-  final String title;
-  final VoidCallback onTap;
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '$index.',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded),
-            ],
-          ),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F7F9),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: SelectableText(
+        text,
+        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+          fontFamily: kAppSerifFont,
+          fontFamilyFallback: kAppSerifFallback,
+          height: 1.5,
         ),
       ),
     );
   }
 }
 
-class SectionItem {
-  const SectionItem({
-    required this.title,
-    required this.entries,
-  });
+class LoadingListView extends StatelessWidget {
+  const LoadingListView({required this.onRefresh, super.key});
 
-  final String title;
-  final List<DetailItem> entries;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          SizedBox(height: 220),
+          Center(child: CircularProgressIndicator()),
+        ],
+      ),
+    );
+  }
 }
 
-class DetailItem {
-  const DetailItem({
+class ErrorListView extends StatelessWidget {
+  const ErrorListView({
+    required this.onRefresh,
+    required this.icon,
     required this.title,
-    required this.paragraphs,
+    this.detail,
+    super.key,
   });
 
+  final Future<void> Function() onRefresh;
+  final IconData icon;
   final String title;
-  final List<String> paragraphs;
+  final String? detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 120),
+          Icon(
+            icon,
+            size: 48,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          if (detail != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              detail!,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
+          const SizedBox(height: 24),
+          FilledButton(
+            onPressed: onRefresh,
+            child: const Text('Erneut laden'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class LawSummary {
+  const LawSummary({
+    required this.code,
+    required this.name,
+  });
+
+  factory LawSummary.fromJson(Map<String, dynamic> json) {
+    return LawSummary(
+      code: (json['code'] as String? ?? '').trim(),
+      name: (json['name'] as String? ?? '').trim(),
+    );
+  }
+
+  final String code;
+  final String name;
+
+  Map<String, Object?> toDbMap(int sortIndex) {
+    return <String, Object?>{
+      'code': code,
+      'name': name,
+      'sort_index': sortIndex,
+    };
+  }
+
+  factory LawSummary.fromDb(Map<String, Object?> map) {
+    return LawSummary(
+      code: (map['code'] as String? ?? '').trim(),
+      name: (map['name'] as String? ?? '').trim(),
+    );
+  }
+}
+
+class ParagraphSummary {
+  const ParagraphSummary({
+    required this.number,
+    required this.title,
+  });
+
+  factory ParagraphSummary.fromJson(Map<String, dynamic> json) {
+    return ParagraphSummary(
+      number: (json['paragraph_number'] as String? ?? '').trim(),
+      title: (json['title'] as String? ?? '').trim(),
+    );
+  }
+
+  final String number;
+  final String title;
+
+  String get displayTitle => '§ $number $title';
+
+  Map<String, Object?> toDbMap(String lawCode, int sortIndex) {
+    return <String, Object?>{
+      'law_code': lawCode,
+      'paragraph_number': number,
+      'title': title,
+      'sort_index': sortIndex,
+    };
+  }
+
+  factory ParagraphSummary.fromDb(Map<String, Object?> map) {
+    return ParagraphSummary(
+      number: (map['paragraph_number'] as String? ?? '').trim(),
+      title: (map['title'] as String? ?? '').trim(),
+    );
+  }
+}
+
+class ParagraphDetail {
+  const ParagraphDetail({
+    required this.number,
+    required this.title,
+    required this.content,
+  });
+
+  factory ParagraphDetail.fromJson(Map<String, dynamic> json) {
+    final paragraphJson = Map<String, dynamic>.from(
+      json['paragraph'] as Map<dynamic, dynamic>? ?? const <String, dynamic>{},
+    );
+
+    return ParagraphDetail(
+      number: (paragraphJson['paragraph_number'] as String? ?? '').trim(),
+      title: (paragraphJson['title'] as String? ?? '').trim(),
+      content: (paragraphJson['content'] as String? ?? '').trim(),
+    );
+  }
+
+  final String number;
+  final String title;
+  final String content;
+
+  String get displayTitle => '§ $number $title';
+
+  Map<String, Object?> toDbMap(String lawCode) {
+    return <String, Object?>{
+      'law_code': lawCode,
+      'paragraph_number': number,
+      'title': title,
+      'content': content,
+    };
+  }
+
+  factory ParagraphDetail.fromDb(Map<String, Object?> map) {
+    return ParagraphDetail(
+      number: (map['paragraph_number'] as String? ?? '').trim(),
+      title: (map['title'] as String? ?? '').trim(),
+      content: (map['content'] as String? ?? '').trim(),
+    );
+  }
+
+  List<String> get contentBlocks {
+    final normalized = content
+        .replaceAll('\r', '\n')
+        .replaceAll('\t', ' ')
+        .replaceAll(RegExp(r'[ ]{2,}'), ' ')
+        .trim();
+
+    if (normalized.isEmpty) {
+      return const ['Kein Inhalt vorhanden.'];
+    }
+
+    final blocks = normalized
+        .split(RegExp(r'(?=\(\d+\))'))
+        .map((block) => block.trim())
+        .where((block) => block.isNotEmpty)
+        .toList(growable: false);
+
+    return blocks.isEmpty ? <String>[normalized] : blocks;
+  }
+}
+
+class LawsApi {
+  static final Uri _rootUri = Uri.parse('https://gesetzimnetz.de/api');
+
+  final http.Client _client;
+
+  LawsApi({http.Client? client}) : _client = client ?? http.Client();
+
+  Future<List<LawSummary>> fetchLaws() async {
+    final decoded = await _getJson(_rootUri);
+    final lawsJson = decoded['laws'];
+
+    if (lawsJson is! List) {
+      throw const FormatException('Ungueltiges API-Format');
+    }
+
+    return lawsJson
+        .map((item) => LawSummary.fromJson(Map<String, dynamic>.from(item)))
+        .where((law) => law.code.isNotEmpty && law.name.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<List<ParagraphSummary>> fetchParagraphs(String lawCode) async {
+    final decoded = await _getJson(Uri.parse('https://gesetzimnetz.de/api/$lawCode'));
+    final paragraphsJson = decoded['paragraphs'];
+
+    if (paragraphsJson is! List) {
+      throw const FormatException('Ungueltiges API-Format');
+    }
+
+    return paragraphsJson
+        .map(
+          (item) => ParagraphSummary.fromJson(
+            Map<String, dynamic>.from(item),
+          ),
+        )
+        .where((paragraph) => paragraph.number.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<ParagraphDetail> fetchParagraphDetail(
+    String lawCode,
+    String paragraphNumber,
+  ) async {
+    final decoded = await _getJson(
+      Uri.parse('https://gesetzimnetz.de/api/$lawCode/$paragraphNumber'),
+    );
+
+    return ParagraphDetail.fromJson(decoded);
+  }
+
+  Future<Map<String, dynamic>> _getJson(Uri uri) async {
+    final response = await _client.get(uri).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+
+    return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+  }
+}
+
+class LawsRepository {
+  factory LawsRepository({
+    LawsApi? api,
+    LawsCacheDatabase? cacheDatabase,
+    Connectivity? connectivity,
+  }) {
+    return _instance ??= LawsRepository._internal(
+      api: api ?? LawsApi(),
+      cacheDatabase: cacheDatabase ?? LawsCacheDatabase(),
+      connectivity: connectivity ?? Connectivity(),
+    );
+  }
+
+  LawsRepository._internal({
+    required LawsApi api,
+    required LawsCacheDatabase cacheDatabase,
+    required Connectivity connectivity,
+  })  : _api = api,
+        _cacheDatabase = cacheDatabase,
+        _connectivity = connectivity;
+
+  static LawsRepository? _instance;
+
+  final LawsApi _api;
+  final LawsCacheDatabase _cacheDatabase;
+  final Connectivity _connectivity;
+
+  Future<List<LawSummary>> getLaws() async {
+    if (await _isOnline()) {
+      try {
+        final laws = await _api.fetchLaws();
+        await _cacheDatabase.replaceLaws(laws);
+        return laws;
+      } catch (_) {
+        final cached = await _cacheDatabase.readLaws();
+        if (cached.isNotEmpty) {
+          return cached;
+        }
+        rethrow;
+      }
+    }
+
+    final cached = await _cacheDatabase.readLaws();
+    if (cached.isNotEmpty) {
+      return cached;
+    }
+
+    throw Exception('Offline und keine zwischengespeicherten Gesetze vorhanden.');
+  }
+
+  Future<List<ParagraphSummary>> getParagraphs(String lawCode) async {
+    if (await _isOnline()) {
+      try {
+        final paragraphs = await _api.fetchParagraphs(lawCode);
+        await _cacheDatabase.replaceParagraphs(lawCode, paragraphs);
+        return paragraphs;
+      } catch (_) {
+        final cached = await _cacheDatabase.readParagraphs(lawCode);
+        if (cached.isNotEmpty) {
+          return cached;
+        }
+        rethrow;
+      }
+    }
+
+    final cached = await _cacheDatabase.readParagraphs(lawCode);
+    if (cached.isNotEmpty) {
+      return cached;
+    }
+
+    throw Exception(
+      'Offline und keine zwischengespeicherten Paragraphen vorhanden.',
+    );
+  }
+
+  Future<ParagraphDetail> getParagraphDetail(
+    String lawCode,
+    String paragraphNumber,
+  ) async {
+    if (await _isOnline()) {
+      try {
+        final detail = await _api.fetchParagraphDetail(lawCode, paragraphNumber);
+        await _cacheDatabase.upsertParagraphDetail(lawCode, detail);
+        return detail;
+      } catch (_) {
+        final cached = await _cacheDatabase.readParagraphDetail(
+          lawCode,
+          paragraphNumber,
+        );
+        if (cached != null) {
+          return cached;
+        }
+        rethrow;
+      }
+    }
+
+    final cached = await _cacheDatabase.readParagraphDetail(
+      lawCode,
+      paragraphNumber,
+    );
+    if (cached != null) {
+      return cached;
+    }
+
+    throw Exception(
+      'Offline und kein zwischengespeicherter Paragraph vorhanden.',
+    );
+  }
+
+  Future<bool> _isOnline() async {
+    final results = await _connectivity.checkConnectivity();
+    return !results.contains(ConnectivityResult.none);
+  }
+}
+
+class LawsCacheDatabase {
+  static const String _databaseName = 'gesetz_im_netz_cache.db';
+  static const int _databaseVersion = 1;
+  static Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) {
+      return _database!;
+    }
+
+    final databasesPath = await getDatabasesPath();
+    final databasePath = path.join(databasesPath, _databaseName);
+
+    _database = await openDatabase(
+      databasePath,
+      version: _databaseVersion,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE laws (
+            code TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            sort_index INTEGER NOT NULL
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE paragraphs (
+            law_code TEXT NOT NULL,
+            paragraph_number TEXT NOT NULL,
+            title TEXT NOT NULL,
+            sort_index INTEGER NOT NULL,
+            PRIMARY KEY (law_code, paragraph_number)
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE paragraph_details (
+            law_code TEXT NOT NULL,
+            paragraph_number TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            PRIMARY KEY (law_code, paragraph_number)
+          )
+        ''');
+      },
+    );
+
+    return _database!;
+  }
+
+  Future<void> replaceLaws(List<LawSummary> laws) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('laws');
+      for (var index = 0; index < laws.length; index++) {
+        await txn.insert('laws', laws[index].toDbMap(index));
+      }
+    });
+  }
+
+  Future<List<LawSummary>> readLaws() async {
+    final db = await database;
+    final rows = await db.query(
+      'laws',
+      orderBy: 'sort_index ASC',
+    );
+
+    return rows.map(LawSummary.fromDb).toList(growable: false);
+  }
+
+  Future<void> replaceParagraphs(
+    String lawCode,
+    List<ParagraphSummary> paragraphs,
+  ) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'paragraphs',
+        where: 'law_code = ?',
+        whereArgs: <Object?>[lawCode],
+      );
+      for (var index = 0; index < paragraphs.length; index++) {
+        await txn.insert(
+          'paragraphs',
+          paragraphs[index].toDbMap(lawCode, index),
+        );
+      }
+    });
+  }
+
+  Future<List<ParagraphSummary>> readParagraphs(String lawCode) async {
+    final db = await database;
+    final rows = await db.query(
+      'paragraphs',
+      where: 'law_code = ?',
+      whereArgs: <Object?>[lawCode],
+      orderBy: 'sort_index ASC',
+    );
+
+    return rows.map(ParagraphSummary.fromDb).toList(growable: false);
+  }
+
+  Future<void> upsertParagraphDetail(
+    String lawCode,
+    ParagraphDetail detail,
+  ) async {
+    final db = await database;
+    await db.insert(
+      'paragraph_details',
+      detail.toDbMap(lawCode),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<ParagraphDetail?> readParagraphDetail(
+    String lawCode,
+    String paragraphNumber,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      'paragraph_details',
+      where: 'law_code = ? AND paragraph_number = ?',
+      whereArgs: <Object?>[lawCode, paragraphNumber],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    return ParagraphDetail.fromDb(rows.first);
+  }
 }
