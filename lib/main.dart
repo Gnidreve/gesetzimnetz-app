@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'data/laws_cache_database.dart';
 import 'pages/root_list_page.dart';
@@ -6,6 +7,7 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   await LawsCacheDatabase().database;
   runApp(const MainApp());
 }

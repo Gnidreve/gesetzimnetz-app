@@ -51,13 +51,33 @@ class SectionDetailPage extends StatefulWidget {
 
 class _SectionDetailPageState extends State<SectionDetailPage> {
   final LawsRepository _lawsRepository = LawsRepository();
+  final TextEditingController _searchController = TextEditingController();
+
   List<ParagraphSummary>? _paragraphs;
   Object? _error;
+  String _query = '';
+
+  List<ParagraphSummary> get _filteredParagraphs {
+    final paragraphs = _paragraphs ?? const <ParagraphSummary>[];
+    if (_query.isEmpty) return paragraphs;
+    final q = _query.toLowerCase();
+    return paragraphs
+        .where((p) =>
+            p.number.toLowerCase().contains(q) ||
+            p.title.toLowerCase().contains(q))
+        .toList(growable: false);
+  }
 
   @override
   void initState() {
     super.initState();
     _initialLoad();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _initialLoad() async {
@@ -101,13 +121,13 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
     }
   }
 
-  Future<void> _openParagraphDetail(int index) {
+  Future<void> _openParagraphDetail(int indexInFullList) {
     return Navigator.of(context).push<void>(
       CupertinoPageRoute<void>(
         builder: (_) => ParagraphDetailPage(
           lawCode: widget.law.code,
           paragraphs: _paragraphs!,
-          initialIndex: index,
+          initialIndex: indexInFullList,
         ),
       ),
     );
@@ -132,41 +152,127 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
             );
           }
 
-          final paragraphs = _paragraphs ?? const <ParagraphSummary>[];
-
-          if (paragraphs.isEmpty) {
+          if (_paragraphs!.isEmpty) {
             return ErrorListView(
               onRefresh: _refresh,
               icon: Icons.menu_book_rounded,
-              title:
-                  'Fuer dieses Gesetz wurden noch keine Paragraphen gefunden.',
+              title: 'Fuer dieses Gesetz wurden noch keine Paragraphen gefunden.',
             );
           }
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
-              itemCount: paragraphs.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final paragraph = paragraphs[index];
-                return AppListTile(
-                  titleWidget: _ParagraphTitle(
-                    number: paragraph.number,
-                    title: paragraph.title,
+          final paragraphs = _filteredParagraphs;
+
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 10, 16, 0),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) => setState(() => _query = value),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF102A43),
                   ),
-                  backgroundColor: Colors.transparent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 18,
+                  decoration: InputDecoration(
+                    hintText: 'Paragraph suchen…',
+                    hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF526377),
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      size: 18,
+                      color: Color(0xFF526377),
+                    ),
+                    prefixIconConstraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 0,
+                    ),
+                    suffixIcon: _query.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              size: 16,
+                              color: Color(0xFF526377),
+                            ),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                          )
+                        : null,
+                    filled: false,
+                    enabledBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Color(0x4D526377),
+                      ),
+                    ),
+                    focusedBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(
+                        color: Color(0xFF102A43),
+                        width: 1.5,
+                      ),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
                   ),
-                  trailing: const Icon(Icons.chevron_right_rounded, size: 20),
-                  onTap: () => _openParagraphDetail(index),
-                );
-              },
-            ),
+                ),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: paragraphs.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(24),
+                          children: [
+                            const SizedBox(height: 60),
+                            const Icon(
+                              Icons.search_off_rounded,
+                              size: 40,
+                              color: Color(0xFF526377),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Kein Paragraph gefunden für „$_query".',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: const Color(0xFF526377),
+                              ),
+                            ),
+                          ],
+                        )
+                      : ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            8,
+                            16,
+                            MediaQuery.of(context).padding.bottom + 32,
+                          ),
+                          itemCount: paragraphs.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            final paragraph = paragraphs[index];
+                            final realIndex = _paragraphs!.indexOf(paragraph);
+                            return AppListTile(
+                              titleWidget: _ParagraphTitle(
+                                number: paragraph.number,
+                                title: paragraph.title,
+                              ),
+                              backgroundColor: Colors.transparent,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 18,
+                              ),
+                              trailing: const Icon(
+                                Icons.chevron_right_rounded,
+                                size: 20,
+                              ),
+                              onTap: () => _openParagraphDetail(realIndex),
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
           );
         },
       ),

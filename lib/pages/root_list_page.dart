@@ -17,15 +17,35 @@ class RootListPage extends StatefulWidget {
 
 class _RootListPageState extends State<RootListPage> {
   final LawsRepository _lawsRepository = LawsRepository();
+  final TextEditingController _searchController = TextEditingController();
+
   List<LawSummary>? _laws;
   Object? _error;
   CacheWarmupProgress? _cacheWarmupProgress;
   bool _isWarmingUpCache = false;
+  String _query = '';
+
+  List<LawSummary> get _filteredLaws {
+    final laws = _laws ?? const <LawSummary>[];
+    if (_query.isEmpty) return laws;
+    final q = _query.toLowerCase();
+    return laws
+        .where((law) =>
+            law.name.toLowerCase().contains(q) ||
+            law.code.toLowerCase().contains(q))
+        .toList(growable: false);
+  }
 
   @override
   void initState() {
     super.initState();
     _initialLoad();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _initialLoad() async {
@@ -70,9 +90,7 @@ class _RootListPageState extends State<RootListPage> {
   }
 
   Future<void> _warmUpCache() async {
-    if (_isWarmingUpCache) {
-      return;
-    }
+    if (_isWarmingUpCache) return;
 
     setState(() {
       _isWarmingUpCache = true;
@@ -86,30 +104,17 @@ class _RootListPageState extends State<RootListPage> {
     try {
       await _lawsRepository.warmUpCache(
         onProgress: (progress) {
-          if (!mounted) {
-            return;
-          }
-
-          setState(() {
-            _cacheWarmupProgress = progress;
-          });
+          if (!mounted) return;
+          setState(() => _cacheWarmupProgress = progress);
         },
       );
-
       await _refresh();
-
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cache wurde vollstaendig aktualisiert.')),
       );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Cache-Aktualisierung fehlgeschlagen: $error')),
       );
@@ -163,24 +168,82 @@ class _RootListPageState extends State<RootListPage> {
             );
           }
 
-          final laws = _laws ?? const <LawSummary>[];
+          final laws = _filteredLaws;
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
-              itemCount: laws.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final law = laws[index];
-                return AppListTile(
-                  title: law.name,
-                  subtitle: law.code,
-                  onTap: () => _openSectionDetail(law),
-                );
-              },
-            ),
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) => setState(() => _query = value),
+                  decoration: InputDecoration(
+                    hintText: 'Gesetz suchen…',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                    suffixIcon: _query.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: laws.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(24),
+                          children: [
+                            const SizedBox(height: 80),
+                            Icon(
+                              Icons.search_off_rounded,
+                              size: 48,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Kein Gesetz gefunden für „$_query".',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                          ],
+                        )
+                      : ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            8,
+                            16,
+                            MediaQuery.of(context).padding.bottom + 32,
+                          ),
+                          itemCount: laws.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            final law = laws[index];
+                            return AppListTile(
+                              title: law.name,
+                              subtitle: law.code,
+                              onTap: () => _openSectionDetail(law),
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
           );
         },
       ),
