@@ -55,22 +55,48 @@ class RootListPage extends StatefulWidget {
 
 class _RootListPageState extends State<RootListPage> {
   final LawsRepository _lawsRepository = LawsRepository();
-  late Future<List<LawSummary>> _lawsFuture;
+  List<LawSummary>? _laws;
+  Object? _error;
   CacheWarmupProgress? _cacheWarmupProgress;
   bool _isWarmingUpCache = false;
 
   @override
   void initState() {
     super.initState();
-    _lawsFuture = _lawsRepository.getLaws();
+    _initialLoad();
+  }
+
+  Future<void> _initialLoad() async {
+    final cached = await _lawsRepository.getCachedLaws();
+    if (!mounted) return;
+    if (cached != null) setState(() => _laws = cached);
+
+    final fresh = await _lawsRepository.silentRefreshLaws();
+    if (!mounted) return;
+    if (fresh != null) {
+      setState(() { _laws = fresh; _error = null; });
+    } else if (cached == null) {
+      setState(() => _error = Exception(
+        'Offline und keine zwischengespeicherten Gesetze vorhanden.',
+      ));
+    }
   }
 
   Future<void> _refresh() async {
-    final future = _lawsRepository.getLaws();
-    setState(() {
-      _lawsFuture = future;
-    });
-    await future;
+    try {
+      final laws = await _lawsRepository.getLaws();
+      if (!mounted) return;
+      setState(() { _laws = laws; _error = null; });
+    } catch (e) {
+      if (!mounted) return;
+      if (_laws == null) {
+        setState(() => _error = e);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Aktualisierung fehlgeschlagen: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _warmUpCache() async {
@@ -121,6 +147,7 @@ class _RootListPageState extends State<RootListPage> {
       if (mounted) {
         setState(() {
           _isWarmingUpCache = false;
+          _cacheWarmupProgress = null;
         });
       }
     }
@@ -143,24 +170,22 @@ class _RootListPageState extends State<RootListPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<LawSummary>>(
-        future: _lawsFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
+      body: Builder(
+        builder: (context) {
+          if (_laws == null && _error == null) {
             return LoadingListView(onRefresh: _refresh);
           }
 
-          if (snapshot.hasError) {
+          if (_error != null) {
             return ErrorListView(
               onRefresh: _refresh,
               icon: Icons.cloud_off_rounded,
               title: 'Die Gesetzesliste konnte gerade nicht geladen werden.',
-              detail: '${snapshot.error}',
+              detail: '$_error',
             );
           }
 
-          final laws = snapshot.data ?? const <LawSummary>[];
+          final laws = _laws ?? const <LawSummary>[];
 
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -202,20 +227,46 @@ class SectionDetailPage extends StatefulWidget {
 
 class _SectionDetailPageState extends State<SectionDetailPage> {
   final LawsRepository _lawsRepository = LawsRepository();
-  late Future<List<ParagraphSummary>> _paragraphsFuture;
+  List<ParagraphSummary>? _paragraphs;
+  Object? _error;
 
   @override
   void initState() {
     super.initState();
-    _paragraphsFuture = _lawsRepository.getParagraphs(widget.law.code);
+    _initialLoad();
+  }
+
+  Future<void> _initialLoad() async {
+    final cached = await _lawsRepository.getCachedParagraphs(widget.law.code);
+    if (!mounted) return;
+    if (cached != null) setState(() => _paragraphs = cached);
+
+    final fresh = await _lawsRepository.silentRefreshParagraphs(widget.law.code);
+    if (!mounted) return;
+    if (fresh != null) {
+      setState(() { _paragraphs = fresh; _error = null; });
+    } else if (cached == null) {
+      setState(() => _error = Exception(
+        'Offline und keine zwischengespeicherten Paragraphen vorhanden.',
+      ));
+    }
   }
 
   Future<void> _refresh() async {
-    final future = _lawsRepository.getParagraphs(widget.law.code);
-    setState(() {
-      _paragraphsFuture = future;
-    });
-    await future;
+    try {
+      final paragraphs = await _lawsRepository.getParagraphs(widget.law.code);
+      if (!mounted) return;
+      setState(() { _paragraphs = paragraphs; _error = null; });
+    } catch (e) {
+      if (!mounted) return;
+      if (_paragraphs == null) {
+        setState(() => _error = e);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Aktualisierung fehlgeschlagen: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _openSheet(ParagraphSummary paragraph) {
@@ -233,24 +284,22 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: SectionAppBar(title: widget.law.name),
-      body: FutureBuilder<List<ParagraphSummary>>(
-        future: _paragraphsFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
+      body: Builder(
+        builder: (context) {
+          if (_paragraphs == null && _error == null) {
             return LoadingListView(onRefresh: _refresh);
           }
 
-          if (snapshot.hasError) {
+          if (_error != null) {
             return ErrorListView(
               onRefresh: _refresh,
               icon: Icons.cloud_off_rounded,
               title: 'Die Paragraphen konnten gerade nicht geladen werden.',
-              detail: '${snapshot.error}',
+              detail: '$_error',
             );
           }
 
-          final paragraphs = snapshot.data ?? const <ParagraphSummary>[];
+          final paragraphs = _paragraphs ?? const <ParagraphSummary>[];
 
           if (paragraphs.isEmpty) {
             return ErrorListView(
@@ -308,15 +357,35 @@ class DetailBottomSheet extends StatefulWidget {
 
 class _DetailBottomSheetState extends State<DetailBottomSheet> {
   final LawsRepository _lawsRepository = LawsRepository();
-  late Future<ParagraphDetail> _detailFuture;
+  ParagraphDetail? _detail;
+  Object? _error;
 
   @override
   void initState() {
     super.initState();
-    _detailFuture = _lawsRepository.getParagraphDetail(
+    _loadDetail();
+  }
+
+  Future<void> _loadDetail() async {
+    final cached = await _lawsRepository.getCachedParagraphDetail(
       widget.lawCode,
       widget.paragraph.number,
     );
+    if (!mounted) return;
+    if (cached != null) setState(() => _detail = cached);
+
+    final fresh = await _lawsRepository.silentRefreshParagraphDetail(
+      widget.lawCode,
+      widget.paragraph.number,
+    );
+    if (!mounted) return;
+    if (fresh != null) {
+      setState(() => _detail = fresh);
+    } else if (cached == null) {
+      setState(() => _error = Exception(
+        'Der Paragraph konnte gerade nicht geladen werden.',
+      ));
+    }
   }
 
   @override
@@ -333,11 +402,9 @@ class _DetailBottomSheetState extends State<DetailBottomSheet> {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
-          child: FutureBuilder<ParagraphDetail>(
-            future: _detailFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting &&
-                  !snapshot.hasData) {
+          child: Builder(
+            builder: (context) {
+              if (_detail == null && _error == null) {
                 return Column(
                   children: [
                     const SizedBox(height: 10),
@@ -356,7 +423,7 @@ class _DetailBottomSheetState extends State<DetailBottomSheet> {
                 );
               }
 
-              if (snapshot.hasError) {
+              if (_error != null) {
                 return Column(
                   children: [
                     const SizedBox(height: 10),
@@ -381,15 +448,9 @@ class _DetailBottomSheetState extends State<DetailBottomSheet> {
                           ),
                           const SizedBox(height: 16),
                           Text(
-                            'Der Paragraph konnte gerade nicht geladen werden.',
+                            '$_error',
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '${snapshot.error}',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.bodyMedium,
                           ),
                         ],
                       ),
@@ -398,7 +459,7 @@ class _DetailBottomSheetState extends State<DetailBottomSheet> {
                 );
               }
 
-              final detail = snapshot.data!;
+              final detail = _detail!;
               final contentNodes = detail.contentNodes;
 
               return Column(
@@ -1110,10 +1171,15 @@ class LawsRepository {
        _connectivity = connectivity;
 
   static LawsRepository? _instance;
+  static const int _kWarmupConcurrency = 8;
 
   final LawsApi _api;
   final LawsCacheDatabase _cacheDatabase;
   final Connectivity _connectivity;
+
+  DateTime? _lastConnectivityCheck;
+  bool? _lastConnectivityResult;
+  static const _kConnectivityCacheDuration = Duration(seconds: 3);
 
   Future<void> warmUpCache({
     required void Function(CacheWarmupProgress progress) onProgress,
@@ -1160,11 +1226,12 @@ class LawsRepository {
       );
     }
 
-    final totalParagraphs = paragraphsByLaw.values.fold<int>(
-      0,
-      (sum, paragraphs) => sum + paragraphs.length,
-    );
-    final totalSteps = 1 + laws.length + totalParagraphs;
+    final allParagraphs = [
+      for (final law in laws)
+        for (final paragraph in paragraphsByLaw[law.code] ?? <ParagraphSummary>[])
+          (lawCode: law.code, paragraph: paragraph),
+    ];
+    final totalSteps = 1 + laws.length + allParagraphs.length;
 
     onProgress(
       CacheWarmupProgress(
@@ -1174,118 +1241,161 @@ class LawsRepository {
       ),
     );
 
-    for (final law in laws) {
-      final paragraphs =
-          paragraphsByLaw[law.code] ?? const <ParagraphSummary>[];
-      for (final paragraph in paragraphs) {
-        final detail = await _api.fetchParagraphDetail(
-          law.code,
-          paragraph.number,
-        );
-        await _cacheDatabase.upsertParagraphDetail(law.code, detail);
-        completedSteps += 1;
-
-        onProgress(
-          CacheWarmupProgress(
-            completedSteps: completedSteps,
-            totalSteps: totalSteps,
-            currentTask: '${law.code} § ${paragraph.number}',
-          ),
-        );
-      }
+    for (var i = 0; i < allParagraphs.length; i += _kWarmupConcurrency) {
+      final batch = allParagraphs.sublist(
+        i,
+        (i + _kWarmupConcurrency).clamp(0, allParagraphs.length),
+      );
+      await Future.wait(
+        batch.map((task) async {
+          final detail = await _api.fetchParagraphDetail(
+            task.lawCode,
+            task.paragraph.number,
+          );
+          await _cacheDatabase.upsertParagraphDetail(task.lawCode, detail);
+          completedSteps += 1;
+          onProgress(
+            CacheWarmupProgress(
+              completedSteps: completedSteps,
+              totalSteps: totalSteps,
+              currentTask: '${task.lawCode} § ${task.paragraph.number}',
+            ),
+          );
+        }),
+      );
     }
   }
 
-  Future<List<LawSummary>> getLaws() async {
+  Future<T> _fetchWithFallback<T>({
+    required Future<T> Function() fetch,
+    required Future<T?> Function() cache,
+    required String offlineError,
+  }) async {
     if (await _isOnline()) {
       try {
-        final laws = await _api.fetchLaws();
-        await _cacheDatabase.replaceLaws(laws);
-        return laws;
+        return await fetch();
       } catch (_) {
-        final cached = await _cacheDatabase.readLaws();
-        if (cached.isNotEmpty) {
-          return cached;
-        }
+        final cached = await cache();
+        if (cached != null) return cached;
         rethrow;
       }
     }
 
-    final cached = await _cacheDatabase.readLaws();
-    if (cached.isNotEmpty) {
-      return cached;
-    }
+    final cached = await cache();
+    if (cached != null) return cached;
 
-    throw Exception(
-      'Offline und keine zwischengespeicherten Gesetze vorhanden.',
-    );
+    throw Exception(offlineError);
   }
 
-  Future<List<ParagraphSummary>> getParagraphs(String lawCode) async {
-    if (await _isOnline()) {
-      try {
-        final paragraphs = await _api.fetchParagraphs(lawCode);
-        await _cacheDatabase.replaceParagraphs(lawCode, paragraphs);
-        return paragraphs;
-      } catch (_) {
-        final cached = await _cacheDatabase.readParagraphs(lawCode);
-        if (cached.isNotEmpty) {
-          return cached;
-        }
-        rethrow;
-      }
-    }
+  Future<List<LawSummary>> getLaws() => _fetchWithFallback(
+    fetch: () async {
+      final laws = await _api.fetchLaws();
+      await _cacheDatabase.replaceLaws(laws);
+      return laws;
+    },
+    cache: () async {
+      final cached = await _cacheDatabase.readLaws();
+      return cached.isEmpty ? null : cached;
+    },
+    offlineError: 'Offline und keine zwischengespeicherten Gesetze vorhanden.',
+  );
 
-    final cached = await _cacheDatabase.readParagraphs(lawCode);
-    if (cached.isNotEmpty) {
-      return cached;
-    }
-
-    throw Exception(
-      'Offline und keine zwischengespeicherten Paragraphen vorhanden.',
-    );
-  }
+  Future<List<ParagraphSummary>> getParagraphs(String lawCode) =>
+      _fetchWithFallback(
+        fetch: () async {
+          final paragraphs = await _api.fetchParagraphs(lawCode);
+          await _cacheDatabase.replaceParagraphs(lawCode, paragraphs);
+          return paragraphs;
+        },
+        cache: () async {
+          final cached = await _cacheDatabase.readParagraphs(lawCode);
+          return cached.isEmpty ? null : cached;
+        },
+        offlineError:
+            'Offline und keine zwischengespeicherten Paragraphen vorhanden.',
+      );
 
   Future<ParagraphDetail> getParagraphDetail(
     String lawCode,
     String paragraphNumber,
+  ) => _fetchWithFallback(
+    fetch: () async {
+      final detail = await _api.fetchParagraphDetail(lawCode, paragraphNumber);
+      await _cacheDatabase.upsertParagraphDetail(lawCode, detail);
+      return detail;
+    },
+    cache: () => _cacheDatabase.readParagraphDetail(lawCode, paragraphNumber),
+    offlineError: 'Offline und kein zwischengespeicherter Paragraph vorhanden.',
+  );
+
+  // Cache-only reads — sofort, kein Netzwerk
+  Future<List<LawSummary>?> getCachedLaws() async {
+    final cached = await _cacheDatabase.readLaws();
+    return cached.isEmpty ? null : cached;
+  }
+
+  Future<List<ParagraphSummary>?> getCachedParagraphs(String lawCode) async {
+    final cached = await _cacheDatabase.readParagraphs(lawCode);
+    return cached.isEmpty ? null : cached;
+  }
+
+  Future<ParagraphDetail?> getCachedParagraphDetail(
+    String lawCode,
+    String paragraphNumber,
+  ) => _cacheDatabase.readParagraphDetail(lawCode, paragraphNumber);
+
+  // Stille Netzwerk-Aktualisierungen — null bei Fehler oder Offline
+  Future<List<LawSummary>?> silentRefreshLaws() async {
+    if (!await _isOnline()) return null;
+    try {
+      final laws = await _api.fetchLaws();
+      await _cacheDatabase.replaceLaws(laws);
+      return laws;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<ParagraphSummary>?> silentRefreshParagraphs(
+    String lawCode,
   ) async {
-    if (await _isOnline()) {
-      try {
-        final detail = await _api.fetchParagraphDetail(
-          lawCode,
-          paragraphNumber,
-        );
-        await _cacheDatabase.upsertParagraphDetail(lawCode, detail);
-        return detail;
-      } catch (_) {
-        final cached = await _cacheDatabase.readParagraphDetail(
-          lawCode,
-          paragraphNumber,
-        );
-        if (cached != null) {
-          return cached;
-        }
-        rethrow;
-      }
+    if (!await _isOnline()) return null;
+    try {
+      final paragraphs = await _api.fetchParagraphs(lawCode);
+      await _cacheDatabase.replaceParagraphs(lawCode, paragraphs);
+      return paragraphs;
+    } catch (_) {
+      return null;
     }
+  }
 
-    final cached = await _cacheDatabase.readParagraphDetail(
-      lawCode,
-      paragraphNumber,
-    );
-    if (cached != null) {
-      return cached;
+  Future<ParagraphDetail?> silentRefreshParagraphDetail(
+    String lawCode,
+    String paragraphNumber,
+  ) async {
+    if (!await _isOnline()) return null;
+    try {
+      final detail = await _api.fetchParagraphDetail(lawCode, paragraphNumber);
+      await _cacheDatabase.upsertParagraphDetail(lawCode, detail);
+      return detail;
+    } catch (_) {
+      return null;
     }
-
-    throw Exception(
-      'Offline und kein zwischengespeicherter Paragraph vorhanden.',
-    );
   }
 
   Future<bool> _isOnline() async {
+    final now = DateTime.now();
+    final lastCheck = _lastConnectivityCheck;
+    final lastResult = _lastConnectivityResult;
+    if (lastCheck != null &&
+        lastResult != null &&
+        now.difference(lastCheck) < _kConnectivityCacheDuration) {
+      return lastResult;
+    }
     final results = await _connectivity.checkConnectivity();
-    return !results.contains(ConnectivityResult.none);
+    _lastConnectivityCheck = now;
+    _lastConnectivityResult = !results.contains(ConnectivityResult.none);
+    return _lastConnectivityResult!;
   }
 }
 
@@ -1320,9 +1430,15 @@ class CacheWarmupProgress {
 }
 
 class LawsCacheDatabase {
+  LawsCacheDatabase._();
+
+  static final LawsCacheDatabase _instance = LawsCacheDatabase._();
+
+  factory LawsCacheDatabase() => _instance;
+
   static const String _databaseName = 'gesetz_im_netz_cache.db';
   static const int _databaseVersion = 2;
-  static Database? _database;
+  Database? _database;
 
   Future<Database> get database async {
     if (_database != null) {
