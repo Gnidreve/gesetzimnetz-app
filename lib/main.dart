@@ -56,6 +56,8 @@ class RootListPage extends StatefulWidget {
 class _RootListPageState extends State<RootListPage> {
   final LawsRepository _lawsRepository = LawsRepository();
   late Future<List<LawSummary>> _lawsFuture;
+  CacheWarmupProgress? _cacheWarmupProgress;
+  bool _isWarmingUpCache = false;
 
   @override
   void initState() {
@@ -71,12 +73,75 @@ class _RootListPageState extends State<RootListPage> {
     await future;
   }
 
+  Future<void> _warmUpCache() async {
+    if (_isWarmingUpCache) {
+      return;
+    }
+
+    setState(() {
+      _isWarmingUpCache = true;
+      _cacheWarmupProgress = const CacheWarmupProgress(
+        completedSteps: 0,
+        totalSteps: null,
+        currentTask: 'Verbinde...',
+      );
+    });
+
+    try {
+      await _lawsRepository.warmUpCache(
+        onProgress: (progress) {
+          if (!mounted) {
+            return;
+          }
+
+          setState(() {
+            _cacheWarmupProgress = progress;
+          });
+        },
+      );
+
+      await _refresh();
+
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cache wurde vollstaendig aktualisiert.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cache-Aktualisierung fehlgeschlagen: $error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isWarmingUpCache = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const SectionAppBar(
+      appBar: SectionAppBar(
         title: 'Gesetz im Netz',
         showRootBrand: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: _CacheWarmupButton(
+              isLoading: _isWarmingUpCache,
+              progress: _cacheWarmupProgress,
+              onPressed: _warmUpCache,
+            ),
+          ),
+        ],
       ),
       body: FutureBuilder<List<LawSummary>>(
         future: _lawsFuture,
@@ -159,10 +224,8 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => DetailBottomSheet(
-        lawCode: widget.law.code,
-        paragraph: paragraph,
-      ),
+      builder: (context) =>
+          DetailBottomSheet(lawCode: widget.law.code, paragraph: paragraph),
     );
   }
 
@@ -193,7 +256,8 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
             return ErrorListView(
               onRefresh: _refresh,
               icon: Icons.menu_book_rounded,
-              title: 'Fuer dieses Gesetz wurden noch keine Paragraphen gefunden.',
+              title:
+                  'Fuer dieses Gesetz wurden noch keine Paragraphen gefunden.',
             );
           }
 
@@ -335,7 +399,7 @@ class _DetailBottomSheetState extends State<DetailBottomSheet> {
               }
 
               final detail = snapshot.data!;
-              final contentBlocks = detail.contentBlocks;
+              final contentNodes = detail.contentNodes;
 
               return Column(
                 children: [
@@ -352,9 +416,9 @@ class _DetailBottomSheetState extends State<DetailBottomSheet> {
                     child: ListView.builder(
                       controller: scrollController,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-                      itemCount: contentBlocks.length,
+                      itemCount: contentNodes.length,
                       itemBuilder: (context, index) {
-                        return ContentCard(text: contentBlocks[index]);
+                        return ContentCard(node: contentNodes[index]);
                       },
                     ),
                   ),
@@ -372,11 +436,13 @@ class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
   const SectionAppBar({
     required this.title,
     this.showRootBrand = false,
+    this.actions,
     super.key,
   });
 
   final String title;
   final bool showRootBrand;
+  final List<Widget>? actions;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -388,11 +454,7 @@ class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SvgPicture.asset(
-                  'favicon.svg',
-                  width: 33,
-                  height: 33,
-                ),
+                SvgPicture.asset('favicon.svg', width: 33, height: 33),
                 const SizedBox(width: 10),
                 Flexible(
                   child: Text(
@@ -406,12 +468,63 @@ class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
             )
           : Text(
               title,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
             ),
       centerTitle: false,
       surfaceTintColor: Colors.transparent,
+      actions: actions,
+    );
+  }
+}
+
+class _CacheWarmupButton extends StatelessWidget {
+  const _CacheWarmupButton({
+    required this.isLoading,
+    required this.progress,
+    required this.onPressed,
+  });
+
+  final bool isLoading;
+  final CacheWarmupProgress? progress;
+  final Future<void> Function() onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final percentageLabel = progress?.percentageLabel;
+    final tooltip = isLoading
+        ? (progress?.currentTask ?? 'Cache wird aktualisiert')
+        : 'Gesamten Cache aktualisieren';
+
+    return Tooltip(
+      message: tooltip,
+      child: TextButton.icon(
+        onPressed: isLoading ? null : onPressed,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          minimumSize: const Size(0, 40),
+        ),
+        icon: SizedBox(
+          width: 18,
+          height: 18,
+          child: isLoading
+              ? CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  value: progress?.progressValue,
+                  color: colorScheme.primary,
+                )
+              : Icon(Icons.sync_rounded, size: 18, color: colorScheme.primary),
+        ),
+        label: Text(
+          isLoading ? (percentageLabel ?? '...') : 'Cache',
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -470,10 +583,7 @@ class AppListTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: 12),
-                trailing!,
-              ],
+              if (trailing != null) ...[const SizedBox(width: 12), trailing!],
             ],
           ),
         ),
@@ -483,11 +593,7 @@ class AppListTile extends StatelessWidget {
 }
 
 class ParagraphTitle extends StatelessWidget {
-  const ParagraphTitle({
-    required this.number,
-    required this.title,
-    super.key,
-  });
+  const ParagraphTitle({required this.number, required this.title, super.key});
 
   final String number;
   final String title;
@@ -508,10 +614,7 @@ class ParagraphTitle extends StatelessWidget {
       TextSpan(
         style: style,
         children: [
-          TextSpan(
-            text: '§ $number',
-            style: numberStyle,
-          ),
+          TextSpan(text: '§ $number', style: numberStyle),
           const WidgetSpan(child: SizedBox(width: 14)),
           TextSpan(text: title),
         ],
@@ -571,9 +674,9 @@ class SheetHeader extends StatelessWidget {
               child: Text(
                 title,
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
                 maxLines: 2,
                 overflow: TextOverflow.fade,
               ),
@@ -586,9 +689,9 @@ class SheetHeader extends StatelessWidget {
 }
 
 class ContentCard extends StatelessWidget {
-  const ContentCard({required this.text, super.key});
+  const ContentCard({required this.node, super.key});
 
-  final String text;
+  final ParagraphContentNode node;
 
   @override
   Widget build(BuildContext context) {
@@ -599,13 +702,43 @@ class ContentCard extends StatelessWidget {
         color: const Color(0xFFF6F7F9),
         borderRadius: BorderRadius.circular(18),
       ),
-      child: SelectableText(
-        text,
-        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-          fontFamily: kAppSerifFont,
-          fontFamilyFallback: kAppSerifFallback,
-          height: 1.5,
-        ),
+      child: _ParagraphContentNodeView(node: node),
+    );
+  }
+}
+
+class _ParagraphContentNodeView extends StatelessWidget {
+  const _ParagraphContentNodeView({required this.node, this.depth = 0});
+
+  final ParagraphContentNode node;
+  final int depth;
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+      fontFamily: kAppSerifFont,
+      fontFamilyFallback: kAppSerifFallback,
+      height: 1.5,
+    );
+
+    final hasText = node.text.isNotEmpty;
+    final indentation = depth * 16.0;
+
+    return Padding(
+      padding: EdgeInsets.only(left: indentation),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasText) SelectableText(node.text, style: textStyle),
+          if (hasText && node.children.isNotEmpty) const SizedBox(height: 12),
+          for (var index = 0; index < node.children.length; index++) ...[
+            _ParagraphContentNodeView(
+              node: node.children[index],
+              depth: depth + 1,
+            ),
+            if (index != node.children.length - 1) const SizedBox(height: 10),
+          ],
+        ],
       ),
     );
   }
@@ -654,11 +787,7 @@ class ErrorListView extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         children: [
           const SizedBox(height: 120),
-          Icon(
-            icon,
-            size: 48,
-            color: Theme.of(context).colorScheme.primary,
-          ),
+          Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
           const SizedBox(height: 16),
           Text(
             title,
@@ -674,10 +803,7 @@ class ErrorListView extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 24),
-          FilledButton(
-            onPressed: onRefresh,
-            child: const Text('Erneut laden'),
-          ),
+          FilledButton(onPressed: onRefresh, child: const Text('Erneut laden')),
         ],
       ),
     );
@@ -685,10 +811,7 @@ class ErrorListView extends StatelessWidget {
 }
 
 class LawSummary {
-  const LawSummary({
-    required this.code,
-    required this.name,
-  });
+  const LawSummary({required this.code, required this.name});
 
   factory LawSummary.fromJson(Map<String, dynamic> json) {
     return LawSummary(
@@ -717,10 +840,7 @@ class LawSummary {
 }
 
 class ParagraphSummary {
-  const ParagraphSummary({
-    required this.number,
-    required this.title,
-  });
+  const ParagraphSummary({required this.number, required this.title});
 
   factory ParagraphSummary.fromJson(Map<String, dynamic> json) {
     return ParagraphSummary(
@@ -755,7 +875,7 @@ class ParagraphDetail {
   const ParagraphDetail({
     required this.number,
     required this.title,
-    required this.content,
+    required this.contentNodes,
   });
 
   factory ParagraphDetail.fromJson(Map<String, dynamic> json) {
@@ -766,13 +886,15 @@ class ParagraphDetail {
     return ParagraphDetail(
       number: (paragraphJson['paragraph_number'] as String? ?? '').trim(),
       title: (paragraphJson['title'] as String? ?? '').trim(),
-      content: (paragraphJson['content'] as String? ?? '').trim(),
+      contentNodes: ParagraphContentNode.listFromDynamic(
+        paragraphJson['content'],
+      ),
     );
   }
 
   final String number;
   final String title;
-  final String content;
+  final List<ParagraphContentNode> contentNodes;
 
   String get displayTitle => '§ $number $title';
 
@@ -781,36 +903,125 @@ class ParagraphDetail {
       'law_code': lawCode,
       'paragraph_number': number,
       'title': title,
-      'content': content,
+      'content': jsonEncode(
+        contentNodes.map((node) => node.toJson()).toList(growable: false),
+      ),
     };
   }
 
   factory ParagraphDetail.fromDb(Map<String, Object?> map) {
+    final rawContent = (map['content'] as String? ?? '').trim();
+
     return ParagraphDetail(
       number: (map['paragraph_number'] as String? ?? '').trim(),
       title: (map['title'] as String? ?? '').trim(),
-      content: (map['content'] as String? ?? '').trim(),
+      contentNodes: ParagraphContentNode.listFromStoredValue(rawContent),
     );
   }
+}
 
-  List<String> get contentBlocks {
-    final normalized = content
+class ParagraphContentNode {
+  const ParagraphContentNode({
+    required this.text,
+    this.children = const <ParagraphContentNode>[],
+  });
+
+  factory ParagraphContentNode.fromDynamic(dynamic value) {
+    if (value is String) {
+      return ParagraphContentNode(text: _normalizeText(value));
+    }
+
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      return ParagraphContentNode(
+        text: _normalizeText(map['text'] as String? ?? ''),
+        children: listFromDynamic(
+          map['children'],
+          fallbackToPlaceholder: false,
+        ),
+      );
+    }
+
+    return const ParagraphContentNode(text: '');
+  }
+
+  final String text;
+  final List<ParagraphContentNode> children;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'text': text,
+      if (children.isNotEmpty)
+        'children': children
+            .map((node) => node.toJson())
+            .toList(growable: false),
+    };
+  }
+
+  static List<ParagraphContentNode> listFromDynamic(
+    dynamic value, {
+    bool fallbackToPlaceholder = true,
+  }) {
+    if (value is List) {
+      final nodes = value
+          .map(ParagraphContentNode.fromDynamic)
+          .where((node) => node.text.isNotEmpty || node.children.isNotEmpty)
+          .toList(growable: false);
+
+      if (nodes.isNotEmpty || !fallbackToPlaceholder) {
+        return nodes;
+      }
+
+      return const <ParagraphContentNode>[
+        ParagraphContentNode(text: 'Kein Inhalt vorhanden.'),
+      ];
+    }
+
+    if (value is String) {
+      final normalized = _normalizeText(value);
+      if (normalized.isEmpty) {
+        if (!fallbackToPlaceholder) {
+          return const <ParagraphContentNode>[];
+        }
+
+        return const <ParagraphContentNode>[
+          ParagraphContentNode(text: 'Kein Inhalt vorhanden.'),
+        ];
+      }
+
+      return <ParagraphContentNode>[ParagraphContentNode(text: normalized)];
+    }
+
+    if (!fallbackToPlaceholder) {
+      return const <ParagraphContentNode>[];
+    }
+
+    return const <ParagraphContentNode>[
+      ParagraphContentNode(text: 'Kein Inhalt vorhanden.'),
+    ];
+  }
+
+  static List<ParagraphContentNode> listFromStoredValue(String rawContent) {
+    if (rawContent.isEmpty) {
+      return const <ParagraphContentNode>[
+        ParagraphContentNode(text: 'Kein Inhalt vorhanden.'),
+      ];
+    }
+
+    try {
+      final decoded = jsonDecode(rawContent);
+      return listFromDynamic(decoded);
+    } on FormatException {
+      return listFromDynamic(rawContent);
+    }
+  }
+
+  static String _normalizeText(String value) {
+    return value
         .replaceAll('\r', '\n')
         .replaceAll('\t', ' ')
         .replaceAll(RegExp(r'[ ]{2,}'), ' ')
         .trim();
-
-    if (normalized.isEmpty) {
-      return const ['Kein Inhalt vorhanden.'];
-    }
-
-    final blocks = normalized
-        .split(RegExp(r'(?=\(\d+\))'))
-        .map((block) => block.trim())
-        .where((block) => block.isNotEmpty)
-        .toList(growable: false);
-
-    return blocks.isEmpty ? <String>[normalized] : blocks;
   }
 }
 
@@ -836,7 +1047,9 @@ class LawsApi {
   }
 
   Future<List<ParagraphSummary>> fetchParagraphs(String lawCode) async {
-    final decoded = await _getJson(Uri.parse('https://gesetzimnetz.de/api/$lawCode'));
+    final decoded = await _getJson(
+      Uri.parse('https://gesetzimnetz.de/api/$lawCode'),
+    );
     final paragraphsJson = decoded['paragraphs'];
 
     if (paragraphsJson is! List) {
@@ -845,9 +1058,7 @@ class LawsApi {
 
     return paragraphsJson
         .map(
-          (item) => ParagraphSummary.fromJson(
-            Map<String, dynamic>.from(item),
-          ),
+          (item) => ParagraphSummary.fromJson(Map<String, dynamic>.from(item)),
         )
         .where((paragraph) => paragraph.number.isNotEmpty)
         .toList(growable: false);
@@ -865,7 +1076,9 @@ class LawsApi {
   }
 
   Future<Map<String, dynamic>> _getJson(Uri uri) async {
-    final response = await _client.get(uri).timeout(const Duration(seconds: 15));
+    final response = await _client
+        .get(uri)
+        .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
       throw Exception('HTTP ${response.statusCode}');
@@ -892,15 +1105,96 @@ class LawsRepository {
     required LawsApi api,
     required LawsCacheDatabase cacheDatabase,
     required Connectivity connectivity,
-  })  : _api = api,
-        _cacheDatabase = cacheDatabase,
-        _connectivity = connectivity;
+  }) : _api = api,
+       _cacheDatabase = cacheDatabase,
+       _connectivity = connectivity;
 
   static LawsRepository? _instance;
 
   final LawsApi _api;
   final LawsCacheDatabase _cacheDatabase;
   final Connectivity _connectivity;
+
+  Future<void> warmUpCache({
+    required void Function(CacheWarmupProgress progress) onProgress,
+  }) async {
+    if (!await _isOnline()) {
+      throw Exception(
+        'Offline. Fuer die Cache-Aktualisierung ist Internet noetig.',
+      );
+    }
+
+    onProgress(
+      const CacheWarmupProgress(
+        completedSteps: 0,
+        totalSteps: null,
+        currentTask: 'Lade Gesetze...',
+      ),
+    );
+
+    final laws = await _api.fetchLaws();
+    await _cacheDatabase.replaceLaws(laws);
+
+    var completedSteps = 1;
+    onProgress(
+      CacheWarmupProgress(
+        completedSteps: completedSteps,
+        totalSteps: null,
+        currentTask: 'Lade Paragraphenlisten...',
+      ),
+    );
+
+    final paragraphsByLaw = <String, List<ParagraphSummary>>{};
+    for (final law in laws) {
+      final paragraphs = await _api.fetchParagraphs(law.code);
+      await _cacheDatabase.replaceParagraphs(law.code, paragraphs);
+      paragraphsByLaw[law.code] = paragraphs;
+      completedSteps += 1;
+
+      onProgress(
+        CacheWarmupProgress(
+          completedSteps: completedSteps,
+          totalSteps: null,
+          currentTask: 'Paragraphenlisten: ${law.code}',
+        ),
+      );
+    }
+
+    final totalParagraphs = paragraphsByLaw.values.fold<int>(
+      0,
+      (sum, paragraphs) => sum + paragraphs.length,
+    );
+    final totalSteps = 1 + laws.length + totalParagraphs;
+
+    onProgress(
+      CacheWarmupProgress(
+        completedSteps: completedSteps,
+        totalSteps: totalSteps,
+        currentTask: 'Lade Paragraphen...',
+      ),
+    );
+
+    for (final law in laws) {
+      final paragraphs =
+          paragraphsByLaw[law.code] ?? const <ParagraphSummary>[];
+      for (final paragraph in paragraphs) {
+        final detail = await _api.fetchParagraphDetail(
+          law.code,
+          paragraph.number,
+        );
+        await _cacheDatabase.upsertParagraphDetail(law.code, detail);
+        completedSteps += 1;
+
+        onProgress(
+          CacheWarmupProgress(
+            completedSteps: completedSteps,
+            totalSteps: totalSteps,
+            currentTask: '${law.code} § ${paragraph.number}',
+          ),
+        );
+      }
+    }
+  }
 
   Future<List<LawSummary>> getLaws() async {
     if (await _isOnline()) {
@@ -922,7 +1216,9 @@ class LawsRepository {
       return cached;
     }
 
-    throw Exception('Offline und keine zwischengespeicherten Gesetze vorhanden.');
+    throw Exception(
+      'Offline und keine zwischengespeicherten Gesetze vorhanden.',
+    );
   }
 
   Future<List<ParagraphSummary>> getParagraphs(String lawCode) async {
@@ -956,7 +1252,10 @@ class LawsRepository {
   ) async {
     if (await _isOnline()) {
       try {
-        final detail = await _api.fetchParagraphDetail(lawCode, paragraphNumber);
+        final detail = await _api.fetchParagraphDetail(
+          lawCode,
+          paragraphNumber,
+        );
         await _cacheDatabase.upsertParagraphDetail(lawCode, detail);
         return detail;
       } catch (_) {
@@ -990,9 +1289,39 @@ class LawsRepository {
   }
 }
 
+class CacheWarmupProgress {
+  const CacheWarmupProgress({
+    required this.completedSteps,
+    required this.totalSteps,
+    required this.currentTask,
+  });
+
+  final int completedSteps;
+  final int? totalSteps;
+  final String currentTask;
+
+  double? get progressValue {
+    final total = totalSteps;
+    if (total == null || total <= 0) {
+      return null;
+    }
+
+    return completedSteps / total;
+  }
+
+  String? get percentageLabel {
+    final progress = progressValue;
+    if (progress == null) {
+      return null;
+    }
+
+    return '${(progress * 100).clamp(0, 100).round()}%';
+  }
+}
+
 class LawsCacheDatabase {
   static const String _databaseName = 'gesetz_im_netz_cache.db';
-  static const int _databaseVersion = 1;
+  static const int _databaseVersion = 2;
   static Database? _database;
 
   Future<Database> get database async {
@@ -1007,35 +1336,53 @@ class LawsCacheDatabase {
       databasePath,
       version: _databaseVersion,
       onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE laws (
-            code TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            sort_index INTEGER NOT NULL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE paragraphs (
-            law_code TEXT NOT NULL,
-            paragraph_number TEXT NOT NULL,
-            title TEXT NOT NULL,
-            sort_index INTEGER NOT NULL,
-            PRIMARY KEY (law_code, paragraph_number)
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE paragraph_details (
-            law_code TEXT NOT NULL,
-            paragraph_number TEXT NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            PRIMARY KEY (law_code, paragraph_number)
-          )
-        ''');
+        await _createSchema(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('DROP TABLE IF EXISTS paragraph_details');
+          await db.execute('''
+            CREATE TABLE paragraph_details (
+              law_code TEXT NOT NULL,
+              paragraph_number TEXT NOT NULL,
+              title TEXT NOT NULL,
+              content TEXT NOT NULL,
+              PRIMARY KEY (law_code, paragraph_number)
+            )
+          ''');
+        }
       },
     );
 
     return _database!;
+  }
+
+  Future<void> _createSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE laws (
+        code TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sort_index INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE paragraphs (
+        law_code TEXT NOT NULL,
+        paragraph_number TEXT NOT NULL,
+        title TEXT NOT NULL,
+        sort_index INTEGER NOT NULL,
+        PRIMARY KEY (law_code, paragraph_number)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE paragraph_details (
+        law_code TEXT NOT NULL,
+        paragraph_number TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        PRIMARY KEY (law_code, paragraph_number)
+      )
+    ''');
   }
 
   Future<void> replaceLaws(List<LawSummary> laws) async {
@@ -1050,10 +1397,7 @@ class LawsCacheDatabase {
 
   Future<List<LawSummary>> readLaws() async {
     final db = await database;
-    final rows = await db.query(
-      'laws',
-      orderBy: 'sort_index ASC',
-    );
+    final rows = await db.query('laws', orderBy: 'sort_index ASC');
 
     return rows.map(LawSummary.fromDb).toList(growable: false);
   }
