@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../theme.dart';
+
 import '../data/laws_repository.dart';
 
 class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
@@ -22,7 +24,7 @@ class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final titleStyle = Theme.of(
       context,
-    ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700);
+    ).textTheme.titleMedium?.copyWith(fontWeight: kWeightBold);
 
     return AppBar(
       leading: showRootBrand
@@ -86,7 +88,7 @@ class CacheWarmupButton extends StatelessWidget {
           isLoading ? (percentageLabel ?? '...') : 'Cache',
           style: Theme.of(context).textTheme.labelLarge?.copyWith(
             color: colorScheme.primary,
-            fontWeight: FontWeight.w700,
+            fontWeight: kWeightBold,
           ),
         ),
       ),

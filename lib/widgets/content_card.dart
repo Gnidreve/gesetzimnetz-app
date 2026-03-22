@@ -27,7 +27,7 @@ class _ParagraphContentNodeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textStyle = Theme.of(context).textTheme.bodyLarge?.copyWith(
+    final textStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
       fontFamily: kAppSerifFont,
       fontFamilyFallback: kAppSerifFallback,
       height: 1.5,

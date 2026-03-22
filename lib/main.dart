@@ -21,13 +21,17 @@ class MainApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0B5D7A)),
         fontFamily: kAppSansFont,
         fontFamilyFallback: kAppSansFallback,
-        textTheme: ThemeData.light().textTheme.apply(
-          fontFamily: kAppSansFont,
-          fontFamilyFallback: kAppSansFallback,
+        textTheme: applyTextWeights(
+          ThemeData.light().textTheme.apply(
+            fontFamily: kAppSansFont,
+            fontFamilyFallback: kAppSansFallback,
+          ),
         ),
-        primaryTextTheme: ThemeData.light().primaryTextTheme.apply(
-          fontFamily: kAppSansFont,
-          fontFamilyFallback: kAppSansFallback,
+        primaryTextTheme: applyTextWeights(
+          ThemeData.light().primaryTextTheme.apply(
+            fontFamily: kAppSansFont,
+            fontFamilyFallback: kAppSansFallback,
+          ),
         ),
         useMaterial3: true,
         scaffoldBackgroundColor: kAppBackgroundColor,

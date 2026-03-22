@@ -10,18 +10,68 @@ import '../widgets/section_app_bar.dart';
 class ParagraphDetailPage extends StatefulWidget {
   const ParagraphDetailPage({
     required this.lawCode,
-    required this.paragraph,
+    required this.paragraphs,
+    required this.initialIndex,
     super.key,
   });
 
   final String lawCode;
-  final ParagraphSummary paragraph;
+  final List<ParagraphSummary> paragraphs;
+  final int initialIndex;
 
   @override
   State<ParagraphDetailPage> createState() => _ParagraphDetailPageState();
 }
 
 class _ParagraphDetailPageState extends State<ParagraphDetailPage> {
+  late final PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final paragraph = widget.paragraphs[_currentIndex];
+
+    return Scaffold(
+      appBar: SectionAppBar(title: '§ ${paragraph.number} | ${paragraph.title}'),
+      body: PageView.builder(
+        controller: _pageController,
+        itemCount: widget.paragraphs.length,
+        onPageChanged: (index) => setState(() => _currentIndex = index),
+        itemBuilder: (context, index) {
+          return _ParagraphPage(
+            lawCode: widget.lawCode,
+            paragraph: widget.paragraphs[index],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ParagraphPage extends StatefulWidget {
+  const _ParagraphPage({required this.lawCode, required this.paragraph});
+
+  final String lawCode;
+  final ParagraphSummary paragraph;
+
+  @override
+  State<_ParagraphPage> createState() => _ParagraphPageState();
+}
+
+class _ParagraphPageState extends State<_ParagraphPage> {
   final LawsRepository _lawsRepository = LawsRepository();
   ParagraphDetail? _detail;
   Object? _error;
@@ -82,42 +132,30 @@ class _ParagraphDetailPageState extends State<ParagraphDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final titleNumber = _detail?.number ?? widget.paragraph.number;
-    final titleText = _detail?.title ?? widget.paragraph.title;
-    final appBarTitle = '§ $titleNumber | $titleText';
+    if (_detail == null && _error == null) {
+      return LoadingListView(onRefresh: _refresh);
+    }
 
-    return Scaffold(
-      appBar: SectionAppBar(title: appBarTitle),
-      body: Builder(
-        builder: (context) {
-          if (_detail == null && _error == null) {
-            return LoadingListView(onRefresh: _refresh);
-          }
+    if (_error != null) {
+      return ErrorListView(
+        onRefresh: _refresh,
+        icon: Icons.cloud_off_rounded,
+        title: 'Der Paragraph konnte gerade nicht geladen werden.',
+        detail: '$_error',
+      );
+    }
 
-          if (_error != null) {
-            return ErrorListView(
-              onRefresh: _refresh,
-              icon: Icons.cloud_off_rounded,
-              title: 'Der Paragraph konnte gerade nicht geladen werden.',
-              detail: '$_error',
-            );
-          }
+    final contentNodes = _detail!.contentNodes;
 
-          final detail = _detail!;
-          final contentNodes = detail.contentNodes;
-
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-              itemCount: contentNodes.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 6),
-              itemBuilder: (context, index) {
-                return ContentCard(node: contentNodes[index]);
-              },
-            ),
-          );
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        itemCount: contentNodes.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 6),
+        itemBuilder: (context, index) {
+          return ContentCard(node: contentNodes[index]);
         },
       ),
     );

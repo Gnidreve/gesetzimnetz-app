@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../data/laws_repository.dart';
+import '../theme.dart';
 import '../models/summaries.dart';
 import '../widgets/app_list_tile.dart';
 import '../widgets/list_states.dart';
@@ -17,12 +18,12 @@ class _ParagraphTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = Theme.of(context).textTheme.titleMedium?.copyWith(
-      fontWeight: FontWeight.w400,
+      fontWeight: kWeightNormal,
       color: const Color(0xFF526377),
       height: 1.25,
     );
     final numberStyle = style?.copyWith(
-      fontWeight: FontWeight.w700,
+      fontWeight: kWeightBold,
       color: const Color(0xFF102A43),
     );
 
@@ -100,12 +101,13 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
     }
   }
 
-  Future<void> _openParagraphDetail(ParagraphSummary paragraph) {
+  Future<void> _openParagraphDetail(int index) {
     return Navigator.of(context).push<void>(
       CupertinoPageRoute<void>(
         builder: (_) => ParagraphDetailPage(
           lawCode: widget.law.code,
-          paragraph: paragraph,
+          paragraphs: _paragraphs!,
+          initialIndex: index,
         ),
       ),
     );
@@ -161,7 +163,7 @@ class _SectionDetailPageState extends State<SectionDetailPage> {
                     vertical: 18,
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded, size: 20),
-                  onTap: () => _openParagraphDetail(paragraph),
+                  onTap: () => _openParagraphDetail(index),
                 );
               },
             ),
